@@ -131,5 +131,6 @@ dmypy.json
 # custom
 01_data/*
 vbz/*
+vbz_delay/*
 .DS_Store
 .vscode/*
