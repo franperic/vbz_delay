@@ -3,12 +3,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glob
 
+import tensorflow as tf
+
 files = glob.glob("01_data/raw/fahrzeit*")
 haltestellen = glob.glob("01_data/raw/halte*")
 
 # Load data
 vbz = pd.concat([pd.read_csv(f) for f in files], axis=0)
-vbz["betriebsdatum"] = pd.to_datetime(vbz["betriebsdatum"], format="%d.%m.%y")
+
+datum_cols = ["betriebsdatum", "datum_von", "datum_nach"]
+vbz[datum_cols] = vbz[datum_cols].apply(pd.to_datetime, format="%d.%m.%y")
+
 
 stations = pd.read_csv(haltestellen[0])
 
@@ -32,55 +37,6 @@ vbz_rich.drop_duplicates(subset=relevant_vars, inplace=True)
 
 line13 = vbz_rich.loc[(vbz_rich["linie"] == 13) & 
                       vbz_rich["fw_lang"].isin(["ALBG - FRAN", "FRAN - ALBG"])]
-check = line13.loc[(line13["betriebsdatum"] == "2020-03-04")]
-check.sort_values(by=["fahrzeug", "fahrt_id", "seq_von"], inplace=True)
-
-# Illustrate
-# Parameter
-delta = check["soll_an_von"] - check["ist_an_von"]
-time = check["ist_an_von"]/(60*60)
-fz = check.fahrzeug.unique()
-
-# Setup
-fig, ax = plt.subplots(nrows=1, ncols=1, sharex=True, sharey=True)
-for i in np.arange(1):
-    fahrzeug = fz[3]
-    # Data prep
-    illust = check.loc[check["fahrzeug"] == fahrzeug]
-    illust.sort_values(by=["fahrt_id", "seq_von"], inplace=True)
-    delta = illust["soll_an_von"] - illust["ist_an_von"]
-    time = illust["ist_an_von"]/(60*60)
-    
-    # Axis
-    # ax.set_ylabel("Delay (Min)")
-    # ax.set_xlabel("Time")
-
-    # Plot
-    ax.plot(time, delta/60)
-    ax.axhline(y=0, c="r")
-
-plt.show()
-
-illust.sort_values("ist_an_von", inplace=True)
-plt.plot(time, delta/60, zorder=-1)
-plt.scatter(time, delta/60, c=illust["fahrt_id"], zorder=1)
-plt.show()
-
-illust.loc[illust["ist_an_von"] < 19800]
-illust["ist_an_von"] / (60*60)
-
-
-# Sanity check
-check.drop(["linie", "richtung", "betriebsdatum", "fahrzeug"], axis=1)
-check[["seq_von", "seq_nach", "fw_lang", "halt_lang_von", "halt_lang_nach"]].values[0:60]
-check[["halt_lang_von", "halt_lang_nach"]].values.tolist()
-
-check["fw_lang"].unique()
-
-illust.loc[illust["fahrt_id"].isin([30155, 30944])]
-illust[["betriebsdatum", "datum_von", "datum_nach"]]
-
-
 
 
 
@@ -88,36 +44,6 @@ delta = line13["soll_an_von"] - line13["ist_an_von"]
 time = line13["ist_an_von"] / (60*60)
 plt.scatter(time, delta/60)
 plt.show()
-
-
-
-single_route = line13.loc[(line13["fahrt_id"] == 30176) & (line13["betriebsdatum"] == "2020-02-11") & (line13["fahrzeug"] == 1674)]
-single_route.drop(["linie", "richtung", "betriebsdatum", "fahrzeug", "kurs"], axis=1)
-single_route.reset_index(inplace=True)
-
-hours = 60*60
-plt.plot(np.sin(single_route.ist_an_von * (2 * np.pi / hours)))
-plt.show()
-
-
-line13.fahrzeug.value_counts()
-single_vehicle = line13.loc[line13["fahrzeug"] == 3002]
-single_vehicle.sort_values(["betriebsdatum", "datum_von", "soll_an_von"], inplace=True)
-
-days = 60*60*24
-
-single_vehicle["day_sin"] = np.sin(single_vehicle.ist_an_von * (2 * np.pi / days))
-single_vehicle["day_cos"] = np.cos(single_vehicle.ist_an_von * (2 * np.pi / days))
-
-action_days = single_vehicle.betriebsdatum.unique()
-for i in np.arange(len(action_days)):
-    illust = single_vehicle.loc[single_vehicle["betriebsdatum"] == action_days[i]].reset_index()
-    plt.plot(illust["day_sin"])
-    plt.plot(illust["day_cos"])
-    
-plt.show()
-
-
 
 line13.sort_values(["fahrzeug", "betriebsdatum", "datum_von", "datum_nach", "soll_an_von"], inplace=True)
 line13["delay"] = line13["soll_ab_von"] - line13["ist_ab_von"]
@@ -148,8 +74,6 @@ plt.show()
 
 # Data Prep
 line13.betriebsdatum.describe()
-splitting_date = "2020-03-01"
-
 line13.betriebsdatum
 line13.betriebsdatum.astype(str) + " " + line13.soll_ab_von.astype(str)  
 
@@ -168,3 +92,23 @@ time_indicator = pd.to_timedelta(x, unit="S").astype(str).str[6:]
 date_time = pd.to_datetime(line13.betriebsdatum.astype(str) + time_indicator, format="%Y-%m-%d %H:%M:%S")
 timestamp_s = date_time.map(datetime.datetime.timestamp)
 
+day = 24*60*60
+line13["day_sin"] = np.sin(timestamp_s * (2 * np.pi / day))
+line13["day_cos"] = np.cos(timestamp_s * (2 * np.pi / day))
+
+# delay
+line13["delay_lag1"] = line13.groupby(["fahrzeug", "betriebsdatum"])["delay"].shift(1)
+line13["delay_lag2"] = line13.groupby(["fahrzeug", "betriebsdatum"])["delay"].shift(2)
+line13["delay_lag3"] = line13.groupby(["fahrzeug", "betriebsdatum"])["delay"].shift(3)
+
+model_col = ["linie", "richtung", "betriebsdatum", "seq_von", "delay_lag1", "delay_lag2", "delay_lag3", "day_sin", "day_cos", "delay"]
+model_df = line13.loc[:, model_col]
+model_df = pd.get_dummies(model_df, columns=["richtung", "seq_von"])
+
+# Train validation test - split
+training = model_df.loc[model_df["betriebsdatum"] < "2020-03-01"]
+validation = model_df.loc[(model_df["betriebsdatum"] >= "2020-03-01") &
+                          (model_df["betriebsdatum"] <= "2020-03-11")]
+test = model_df.loc[model_df["betriebsdatum"] > "2020-03-11"]
+
+training.shape
